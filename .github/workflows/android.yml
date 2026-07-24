@@ -1,0 +1,227 @@
+name: Android CI
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Create Android Project Structure
+      run: |
+        # 1. 创建所有需要的正确文件夹
+        mkdir -p app/src/main/java/com/example/netsniffer
+        mkdir -p app/src/main/res/layout
+
+        # 2. 写入根目录配置文件
+        cat << 'EOF' > settings.gradle
+        pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+        dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+        rootProject.name = "NetSniffer"
+        include ':app'
+        EOF
+
+        cat << 'EOF' > build.gradle
+        buildscript {
+            repositories { google(); mavenCentral() }
+            dependencies {
+                classpath 'com.android.tools.build:gradle:8.1.1'
+                classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.8.10"
+            }
+        }
+        allprojects { repositories { google(); mavenCentral() } }
+        EOF
+
+        cat << 'EOF' > gradle.properties
+        android.useAndroidX=true
+        android.enableJetifier=true
+        org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+        EOF
+
+        # 3. 写入 app 模块配置文件
+        cat << 'EOF' > app/build.gradle
+        plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
+        android {
+            namespace 'com.example.netsniffer'
+            compileSdk 34
+            defaultConfig { applicationId "com.example.netsniffer"; minSdk 24; targetSdk 34; versionCode 1; versionName "1.0" }
+            buildTypes { release { minifyEnabled false } }
+        }
+        dependencies {
+            implementation 'androidx.core:core-ktx:1.12.0'
+            implementation 'androidx.appcompat:appcompat:1.6.1'
+            implementation 'com.google.android.material:material:1.9.0'
+        }
+        EOF
+
+        # 4. 写入 Android 清单文件
+        cat << 'EOF' > app/src/main/AndroidManifest.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <manifest xmlns:android="http://schemas.android.com/apk/apk/res/android" package="com.example.netsniffer">
+            <uses-permission android:name="android.permission.INTERNET" />
+            <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+            <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+            <application android:allowBackup="true" android:label="网络悬浮监听器" android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+                <activity android:name=".MainActivity" android:exported="true">
+                    <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+                </activity>
+                <service android:name=".FloatingService" android:enabled="true" android:exported="false" />
+            </application>
+        </manifest>
+        EOF
+
+        # 5. 写入主界面代码
+        cat << 'EOF' > app/src/main/java/com/example/netsniffer/MainActivity.kt
+        package com.example.netsniffer
+        import android.content.Intent
+        import android.net.Uri
+        import android.os.Build
+        import android.os.Bundle
+        import android.provider.Settings
+        import android.widget.Button
+        import android.widget.EditText
+        import android.widget.Toast
+        import androidx.appcompat.app.AppCompatActivity
+        class MainActivity : AppCompatActivity() {
+            override fun onCreate(savedInstanceState: Bundle?) {
+                super.onCreate(savedInstanceState)
+                setContentView(R.layout.activity_main)
+                val etPort = findViewById<EditText>(R.id.etPort)
+                val btnStart = findViewById<Button>(R.id.btnStart)
+                val btnStop = findViewById<Button>(R.id.btnStop)
+                btnStart.setOnClickListener {
+                    val portStr = etPort.text.toString()
+                    if (portStr.isEmpty()) { Toast.makeText(this, "请输入端口号", Toast.LENGTH_SHORT).show(); return@setOnClickListener }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+                        val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))
+                        startActivity(intent)
+                    } else {
+                        val intent = Intent(this, FloatingService::class.java).apply { putExtra("PORT", portStr.toInt()) }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { startForegroundService(intent) } else { startService(intent) }
+                    }
+                }
+                btnStop.setOnClickListener { stopService(Intent(this, FloatingService::class.java)) }
+            }
+        }
+        EOF
+
+        # 6. 写入后台悬浮窗服务代码
+        cat << 'EOF' > app/src/main/java/com/example/netsniffer/FloatingService.kt
+        package com.example.netsniffer
+        import android.app.*
+        import android.content.Context
+        import android.content.Intent
+        import android.graphics.PixelFormat
+        import android.os.Build
+        import android.os.IBinder
+        import android.view.*
+        import android.widget.TextView
+        import androidx.core.app.NotificationCompat
+        import java.io.File
+        import java.io.FileOutputStream
+        import java.net.DatagramPacket
+        import java.net.DatagramSocket
+        import java.text.SimpleDateFormat
+        import java.util.*
+        import kotlin.concurrent.thread
+        class FloatingService : Service() {
+            private lateinit var wm: WindowManager
+            private var floatingView: View? = null
+            private var socket: DatagramSocket? = null
+            private var isRunning = false
+            private var logFile: File? = null
+            override fun onBind(p0: Intent?): IBinder? = null
+            override fun onCreate() {
+                super.onCreate()
+                wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                logFile = File(getExternalFilesDir("Logs"), "net_data.txt")
+            }
+            override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+                val port = intent?.getIntExtra("PORT", 8080) ?: 8080
+                showNotification(port)
+                showFloatingWindow()
+                startListening(port)
+                return START_NOT_STICKY
+            }
+            private fun showNotification(port: Int) {
+                val channelId = "sniff_channel"
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val channel = NotificationChannel(channelId, "Sniffer", NotificationManager.IMPORTANCE_LOW)
+                    getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+                }
+                val notification = NotificationCompat.Builder(this, channelId)
+                    .setContentTitle("网络监听中").setContentText("端口: $port").setSmallIcon(android.R.drawable.stat_notify_chat).build()
+                startForeground(1, notification)
+            }
+            private fun showFloatingWindow() {
+                floatingView = LayoutInflater.from(this).inflate(R.layout.layout_floating_window, null)
+                val flag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY } else { WindowManager.LayoutParams.TYPE_PHONE }
+                val params = WindowManager.LayoutParams(WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT, flag, WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT).apply {
+                    gravity = Gravity.TOP or Gravity.START
+                    x = 100; y = 100
+                }
+                wm.addView(floatingView, params)
+            }
+            private fun startListening(port: Int) {
+                isRunning = true
+                thread {
+                    try {
+                        socket = DatagramSocket(port)
+                        val buffer = ByteArray(2048)
+                        while (isRunning) {
+                            val packet = DatagramPacket(buffer, buffer.size)
+                            socket?.receive(packet)
+                            val data = String(packet.data, 0, packet.length)
+                            val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+                            val line = "[$time] ${packet.address.hostAddress}: $data"
+                            floatingView?.findViewById<TextView>(R.id.tvFloatingData)?.post {
+                                floatingView?.findViewById<TextView>(R.id.tvFloatingData)?.text = line
+                            }
+                            FileOutputStream(logFile, true).use { it.write((line + "\n").toByteArray()) }
+                        }
+                    } catch (e: Exception) { e.printStackTrace() }
+                }
+            }
+            override fun onDestroy() {
+                super.onDestroy()
+                isRunning = false
+                socket?.close()
+                floatingView?.let { wm.removeView(it) }
+            }
+        }
+        EOF
+
+        # 7. 写入布局文件
+        cat << 'EOF' > app/src/main/res/layout/activity_main.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <LinearLayout xmlns:android="http://xmlns.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="20dp" android:gravity="center">
+            <EditText android:id="@+id/etPort" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="输入本地监听端口 (如 8080)" android:inputType="number" android:layout_marginBottom="20dp"/>
+            <Button android:id="@+id/btnStart" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="启动悬浮窗与监听"/>
+            <Button android:id="@+id/btnStop" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="停止监听" android:layout_marginTop="10dp"/>
+        </LinearLayout>
+        EOF
+
+        cat << 'EOF' > app/src/main/res/layout/layout_floating_window.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <FrameLayout xmlns:android="http://xmlns.android.com/apk/res/android" android:layout_width="wrap_content" android:layout_height="wrap_content">
+            <TextView android:id="@+id/tvFloatingData" android:layout_width="200dp" android:layout_height="wrap_content" android:background="#CC000000" android:textColor="#00FF00" android:textSize="12sp" android:padding="10dp" android:text="等待数据..." android:elevation="4dp" />
+        </FrameLayout>
+        EOF
+
+    - name: set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v3
+
+    - name: Build with Gradle
+      run: gradle :app:assembleDebug
+
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: network-sniffer-apk
+        path: app/build/outputs/apk/debug/app-debug.apk
