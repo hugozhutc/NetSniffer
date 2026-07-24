@@ -13,23 +13,27 @@ jobs:
         mkdir -p app/src/main/java/com/example/netsniffer
         mkdir -p app/src/main/res/layout
 
-        # 2. 写入根目录配置文件
+        # 2. 写入根目录配置文件（包含完整的仓库配置）
         cat << 'EOF' > settings.gradle
-        pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
-        dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+        pluginManagement { 
+            repositories { google(); mavenCentral(); gradlePluginPortal() } 
+        }
+        dependencyResolutionManagement { 
+            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+            repositories { google(); mavenCentral() } 
+        }
         rootProject.name = "NetSniffer"
         include ':app'
         EOF
 
+        # 修复点 1：移除 build.gradle 中冲突的 repositories 块，只保留全局插件类路径
         cat << 'EOF' > build.gradle
         buildscript {
-            repositories { google(); mavenCentral() }
             dependencies {
                 classpath 'com.android.tools.build:gradle:8.1.1'
                 classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.8.10"
             }
         }
-        allprojects { repositories { google(); mavenCentral() } }
         EOF
 
         cat << 'EOF' > gradle.properties
@@ -57,7 +61,7 @@ jobs:
         # 4. 写入 Android 清单文件
         cat << 'EOF' > app/src/main/AndroidManifest.xml
         <?xml version="1.0" encoding="utf-8"?>
-        <manifest xmlns:android="http://schemas.android.com/apk/apk/res/android" package="com.example.netsniffer">
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.netsniffer">
             <uses-permission android:name="android.permission.INTERNET" />
             <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
             <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -191,10 +195,10 @@ jobs:
         }
         EOF
 
-        # 7. 写入布局文件
+        # 7. 写入布局文件（修复点 2：更正 XML 命名空间为标准的 schemas 格式）
         cat << 'EOF' > app/src/main/res/layout/activity_main.xml
         <?xml version="1.0" encoding="utf-8"?>
-        <LinearLayout xmlns:android="http://xmlns.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="20dp" android:gravity="center">
+        <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="20dp" android:gravity="center">
             <EditText android:id="@+id/etPort" android:layout_width="match_parent" android:layout_height="wrap_content" android:hint="输入本地监听端口 (如 8080)" android:inputType="number" android:layout_marginBottom="20dp"/>
             <Button android:id="@+id/btnStart" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="启动悬浮窗与监听"/>
             <Button android:id="@+id/btnStop" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="停止监听" android:layout_marginTop="10dp"/>
@@ -203,7 +207,7 @@ jobs:
 
         cat << 'EOF' > app/src/main/res/layout/layout_floating_window.xml
         <?xml version="1.0" encoding="utf-8"?>
-        <FrameLayout xmlns:android="http://xmlns.android.com/apk/res/android" android:layout_width="wrap_content" android:layout_height="wrap_content">
+        <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="wrap_content" android:layout_height="wrap_content">
             <TextView android:id="@+id/tvFloatingData" android:layout_width="200dp" android:layout_height="wrap_content" android:background="#CC000000" android:textColor="#00FF00" android:textSize="12sp" android:padding="10dp" android:text="等待数据..." android:elevation="4dp" />
         </FrameLayout>
         EOF
