@@ -13,7 +13,7 @@ jobs:
         mkdir -p app/src/main/java/com/example/netsniffer
         mkdir -p app/src/main/res/layout
 
-        # 2. 写入根目录配置文件（包含完整的仓库配置）
+        # 2. 写入根目录配置文件（利用新版 pluginManagement 集中管理插件仓库）
         cat << 'EOF' > settings.gradle
         pluginManagement { 
             repositories { google(); mavenCentral(); gradlePluginPortal() } 
@@ -26,14 +26,9 @@ jobs:
         include ':app'
         EOF
 
-        # 修复点 1：移除 build.gradle 中冲突的 repositories 块，只保留全局插件类路径
+        # 修复点：彻底清空根 build.gradle 里的 buildscript，避免仓库未声明的报错
         cat << 'EOF' > build.gradle
-        buildscript {
-            dependencies {
-                classpath 'com.android.tools.build:gradle:8.1.1'
-                classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.8.10"
-            }
-        }
+        // 根目录保持空白即可，所有插件在子模块直接按版本引用
         EOF
 
         cat << 'EOF' > gradle.properties
@@ -42,9 +37,12 @@ jobs:
         org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
         EOF
 
-        # 3. 写入 app 模块配置文件
+        # 3. 写入 app 模块配置文件（在这里直接指定插件版本）
         cat << 'EOF' > app/build.gradle
-        plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
+        plugins { 
+            id 'com.android.application' version '8.1.1'
+            id 'org.jetbrains.kotlin.android' version '1.8.10'
+        }
         android {
             namespace 'com.example.netsniffer'
             compileSdk 34
@@ -195,7 +193,7 @@ jobs:
         }
         EOF
 
-        # 7. 写入布局文件（修复点 2：更正 XML 命名空间为标准的 schemas 格式）
+        # 7. 写入布局文件
         cat << 'EOF' > app/src/main/res/layout/activity_main.xml
         <?xml version="1.0" encoding="utf-8"?>
         <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:padding="20dp" android:gravity="center">
